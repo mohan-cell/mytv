@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Reseller Panel</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; }
+        .header { background: #d32f2f; color: white; padding: 20px; display: flex; justify-content: space-around; align-items: center; }
+        .stat-box { text-align: center; }
+        .stat-val { font-size: 24px; font-weight: bold; }
+        .tabs { display: flex; background: white; border-bottom: 2px solid #ccc; }
+        .tab { padding: 15px 30px; cursor: pointer; font-weight: bold; color: #555; }
+        .tab.active { border-bottom: 3px solid #d32f2f; color: #d32f2f; }
+        .content { padding: 20px; max-width: 1000px; margin: auto; }
+        .panel { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .panel.active { display: block; }
+        
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        select, input { padding: 10px; width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .btn { background: #d32f2f; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .btn:hover { background: #b71c1c; }
+        
+        .calculator { background: #ffebee; padding: 15px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #ffcdd2; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 10px; border-bottom: 1px solid #ddd; text-align: left; }
+        .logout { background: transparent; border: 1px solid white; color: white; padding: 5px 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="stat-box"><div>AVAILABLE BALANCE (<span id="curr">INR</span>)</div><div class="stat-val">₹<span id="bal">0.00</span></div></div>
+        <div class="stat-box"><div>TOTAL ISSUED</div><div class="stat-val" id="issued">0</div></div>
+        <div class="stat-box"><div>TOTAL REDEEMED</div><div class="stat-val" id="redeemed">0</div></div>
+        <button class="logout" id="logoutBtn">Logout</button>
+    </div>
+
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('generate')">Generate Coupons</div>
+        <div class="tab" onclick="switchTab('coupons')">My Coupons</div>
+        <div class="tab" onclick="switchTab('ledger')">Ledger</div>
+    </div>
+
+    <div class="content">
+        <!-- Generate Tab -->
+        <div id="generate" class="panel active">
+            <div class="form-group">
+                <label>Duration</label>
+                <select id="duration">
+                    <option value="7">7 Days</option><option value="30">1 Month</option>
+                    <option value="90">3 Months</option><option value="180">6 Months</option><option value="365">12 Months</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Subscription Tier</label>
+                <select id="tier"><option value="Standard">Standard</option><option value="Premium">Premium</option></select>
+            </div>
+            <div class="form-group">
+                <label>Quantity (Max 500)</label>
+                <input type="number" id="qty" min="1" max="500" value="1">
+            </div>
+            <div class="form-group">
+                <label>Redeem By (Optional)</label>
+                <input type="date" id="redeemBy">
+            </div>
+            
+            <div class="calculator">
+                <strong>Cost Calculator:</strong><br>
+                Unit Price: ₹<span id="calcUnit">0</span> | Total Cost: ₹<span id="calcTotal">0</span> | Balance After: ₹<span id="calcAfter">0</span>
+            </div>
+            <button class="btn" id="generateBtn">Generate Coupons</button>
+        </div>
+
+        <!-- Coupons Tab -->
+        <div id="coupons" class="panel">
+            <table>
+                <thead><tr><th>Code</th><th>Tier</th><th>Duration</th><th>Status</th><th>Redeem By</th></tr></thead>
+                <tbody id="couponsList"></tbody>
+            </table>
+        </div>
+
+        <!-- Ledger Tab -->
+        <div id="ledger" class="panel">
+            <table>
+                <thead><tr><th>Date</th><th>Action</th><th>Amount Deducted</th></tr></thead>
+                <tbody id="ledgerList"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script type="module">
+        import { supabase, checkAuth, logout } from './config.js';
+        let user, wallet, pricingMap = {};
+
+        document.getElementById('logoutBtn').addEventListener('click', logout);
+        
+        window.switchTab = function(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+            if(tabId === 'coupons') loadCoupons();
+            if(tabId === 'ledger') loadLedger();
+        };
+
+        async function init() {
+            const authData = await checkAuth('reseller');
+            user = authData.session.user;
+            await loadWallet();
+            await loadPricing();
+            updateCalculator();
+        }
+
+        async function loadWallet() {
+            const { data } = await supabase.from('reseller_wallets').select('*').eq('reseller_id', user.id).single();
+            if(data) {
+                wallet = data;
+                document.getElementById('bal').innerText = data.available_balance;
+                document.getElementById('curr').innerText = data.currency;
+                document.getElementById('issued').innerText = data.total_issued;
+                document.getElementById('redeemed').innerText = data.total_redeemed;
+            }
+        }
+
+        async function loadPricing() {
+            const { data } = await supabase.from('admin_pricing').select('*');
+            data.forEach(p => pricingMap[`${p.duration_days}-${p.tier_name}`] = p.price);
+        }
+
+        function updateCalculator() {
+            const dur = document.getElementById('duration').value;
+            const tier = document.getElementById('tier').value;
+            const qty = parseInt(document.getElementById('qty').value) || 0;
+            
+            const unitPrice = pricingMap[`${dur}-${tier}`] || 0;
+            const total = unitPrice * qty;
+            const after = (wallet?.available_balance || 0) - total;
+
+            document.getElementById('calcUnit').innerText = unitPrice;
+            document.getElementById('calcTotal').innerText = total;
+            document.getElementById('calcAfter').innerText = after >= 0 ? after : 'Insufficient Funds';
+            document.getElementById('calcAfter').style.color = after >= 0 ? 'green' : 'red';
+        }
+
+        ['duration', 'tier', 'qty'].forEach(id => document.getElementById(id).addEventListener('change', updateCalculator));
+
+        document.getElementById('generateBtn').addEventListener('click', async () => {
+            const dur = parseInt(document.getElementById('duration').value);
+            const tier = document.getElementById('tier').value;
+            const qty = parseInt(document.getElementById('qty').value);
+            let redeemBy = document.getElementById('redeemBy').value;
+            redeemBy = redeemBy ? new Date(redeemBy).toISOString() : null;
+
+            if(qty < 1 || qty > 500) return alert('Invalid quantity');
+            
+            const { data, error } = await supabase.rpc('generate_coupons', {
+                p_tier: tier, p_duration_days: dur, p_qty: qty, p_redeem_by: redeemBy
+            });
+
+            if(error) alert('Error: ' + error.message);
+            else {
+                alert(`Successfully generated ${qty} coupons!`);
+                await loadWallet();
+                updateCalculator();
+                document.getElementById('qty').value = 1;
+            }
+        });
+
+        async function loadCoupons() {
+            const { data } = await supabase.from('coupons').select('*').eq('reseller_id', user.id).order('created_at', {ascending: false});
+            document.getElementById('couponsList').innerHTML = data.map(c => `
+                <tr><td><strong>${c.code}</strong></td><td>${c.tier}</td><td>${c.duration_days} days</td>
+                <td>${c.status}</td><td>${c.redeem_by_date ? new Date(c.redeem_by_date).toLocaleDateString() : 'Never'}</td></tr>
+            `).join('');
+        }
+
+        async function loadLedger() {
+            const { data } = await supabase.from('ledger').select('*').eq('reseller_id', user.id).order('created_at', {ascending: false});
+            document.getElementById('ledgerList').innerHTML = data.map(l => `
+                <tr><td>${new Date(l.created_at).toLocaleString()}</td><td>${l.action_type}</td><td>₹${l.amount_deducted}</td></tr>
+            `).join('');
+        }
+
+        init();
+    </script>
+</body>
+</html>
