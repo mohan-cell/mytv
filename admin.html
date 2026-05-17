@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #eef2f3; margin: 0; }
+        .header { background: #2c3e50; color: white; padding: 20px; display: flex; justify-content: space-between; }
+        .content { padding: 20px; max-width: 1200px; margin: auto; }
+        .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);}
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 10px; border-bottom: 1px solid #ddd; text-align: left; }
+        button { padding: 8px 15px; background: #2980b9; color: white; border: none; border-radius: 4px; cursor: pointer;}
+        button:hover { background: #1c5980; }
+        input { padding: 8px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>myTV Admin Panel</h2>
+        <button id="logoutBtn">Logout</button>
+    </div>
+    
+    <div class="content">
+        <div class="card">
+            <h3>Manage Reseller Wallets</h3>
+            <table>
+                <thead><tr><th>Reseller ID</th><th>Balance (₹)</th><th>Total Issued</th><th>Add/Deduct Balance</th></tr></thead>
+                <tbody id="resellerList"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script type="module">
+        import { supabase, checkAuth, logout } from './config.js';
+        
+        document.getElementById('logoutBtn').addEventListener('click', logout);
+
+        async function init() {
+            await checkAuth('admin');
+            loadResellers();
+        }
+
+        async function loadResellers() {
+            // Join profiles with wallets
+            const { data, error } = await supabase.from('reseller_wallets').select('*, profiles(email)');
+            
+            document.getElementById('resellerList').innerHTML = data.map(r => `
+                <tr>
+                    <td>${r.profiles?.email || r.reseller_id}</td>
+                    <td>₹${r.available_balance}</td>
+                    <td>${r.total_issued}</td>
+                    <td>
+                        <input type="number" id="amt_${r.reseller_id}" placeholder="Amount" style="width:100px;">
+                        <button onclick="updateBalance('${r.reseller_id}', 'add')">Add</button>
+                        <button onclick="updateBalance('${r.reseller_id}', 'deduct')" style="background:#c0392b;">Deduct</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        window.updateBalance = async function(id, action) {
+            const amt = parseFloat(document.getElementById(`amt_${id}`).value);
+            if(!amt || amt <= 0) return alert('Enter valid amount');
+
+            const { data: wallet } = await supabase.from('reseller_wallets').select('available_balance').eq('reseller_id', id).single();
+            
+            let newBalance = action === 'add' ? Number(wallet.available_balance) + amt : Number(wallet.available_balance) - amt;
+            if(newBalance < 0) return alert('Balance cannot go below 0');
+
+            const { error } = await supabase.from('reseller_wallets').update({ available_balance: newBalance }).eq('reseller_id', id);
+            
+            if(!error) { alert('Updated successfully'); loadResellers(); }
+            else alert(error.message);
+        }
+
+        init();
+    </script>
+</body>
+</html>
